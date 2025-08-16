@@ -25,6 +25,37 @@ import threading
 import subprocess
 import queue
 import os
+import json
+import shutil
+
+
+class Tooltip:
+    def __init__(self, widget, text):
+        self.widget = widget
+        self.text = text
+        self.tooltip_window = None
+        self.widget.bind("<Enter>", self.show_tooltip)
+        self.widget.bind("<Leave>", self.hide_tooltip)
+
+    def show_tooltip(self, event=None):
+        if self.tooltip_window or not self.text:
+            return
+        x, y, _, _ = self.widget.bbox("insert")
+        x += self.widget.winfo_rootx() + 25
+        y += self.widget.winfo_rooty() + 25
+
+        self.tooltip_window = ctk.CTkToplevel(self.widget)
+        self.tooltip_window.wm_overrideredirect(True)
+        self.tooltip_window.wm_geometry(f"+{x}+{y}")
+
+        label = ctk.CTkLabel(self.tooltip_window, text=self.text, corner_radius=5, fg_color="#363636", wraplength=200)
+        label.pack(ipadx=5, ipady=3)
+
+    def hide_tooltip(self, event=None):
+        if self.tooltip_window:
+            self.tooltip_window.destroy()
+        self.tooltip_window = None
+
 
 class Py2WinApp(ctk.CTk):
     def __init__(self):
@@ -38,16 +69,62 @@ class Py2WinApp(ctk.CTk):
         ctk.set_default_color_theme("blue")
 
         self.grid_columnconfigure(0, weight=1)
-        self.grid_rowconfigure(2, weight=1)
+        self.grid_rowconfigure(3, weight=1)
 
         # --- UI Elements ---
         self.create_widgets()
         self.update_status("Ready")
+        self.check_dependencies()
+
+    def check_dependencies(self):
+        if not shutil.which("pyinstaller"):
+            self.log("ERROR: PyInstaller is not installed or not in your system's PATH.")
+            self.log("Please install it using: pip install pyinstaller")
+            self.update_status("Error: PyInstaller not found!")
+            self.build_button.configure(state="disabled", text="PyInstaller Not Found")
+
+    def show_about_window(self):
+        about_win = ctk.CTkToplevel(self)
+        about_win.title("About Py2Win")
+        about_win.geometry("400x250")
+        about_win.transient(self) # Keep on top of the main window
+        about_win.grab_set() # Modal
+
+        about_win.grid_columnconfigure(0, weight=1)
+
+        title_label = ctk.CTkLabel(about_win, text="Py2Win GUI", font=ctk.CTkFont(size=20, weight="bold"))
+        title_label.grid(row=0, column=0, padx=20, pady=(20, 10))
+
+        version_label = ctk.CTkLabel(about_win, text="Version 1.0.0")
+        version_label.grid(row=1, column=0, padx=20, pady=0)
+
+        desc_label = ctk.CTkLabel(about_win, text="A user-friendly graphical interface for PyInstaller.", wraplength=360)
+        desc_label.grid(row=2, column=0, padx=20, pady=10)
+
+        credit_label = ctk.CTkLabel(about_win, text="Packaged with assistance from Jules.")
+        credit_label.grid(row=3, column=0, padx=20, pady=10)
+
+        ok_button = ctk.CTkButton(about_win, text="OK", command=about_win.destroy)
+        ok_button.grid(row=4, column=0, padx=20, pady=(20,20))
 
     def create_widgets(self):
+        # --- Profile Management Frame ---
+        self.profile_frame = ctk.CTkFrame(self)
+        self.profile_frame.grid(row=0, column=0, padx=10, pady=(10, 5), sticky="ew")
+        self.profile_frame.grid_columnconfigure(1, weight=1)
+
+        self.about_button = ctk.CTkButton(self.profile_frame, text="About", command=self.show_about_window, width=80)
+        self.about_button.grid(row=0, column=0, padx=10, pady=10, sticky="w")
+
+        self.load_profile_button = ctk.CTkButton(self.profile_frame, text="Load Profile", command=self.load_profile)
+        self.load_profile_button.grid(row=0, column=3, padx=10, pady=10, sticky="e")
+
+        self.save_profile_button = ctk.CTkButton(self.profile_frame, text="Save Profile", command=self.save_profile)
+        self.save_profile_button.grid(row=0, column=2, padx=(10,5), pady=10, sticky="e")
+
         # --- Script Selection Frame ---
         self.script_frame = ctk.CTkFrame(self)
-        self.script_frame.grid(row=0, column=0, padx=10, pady=(10, 5), sticky="ew")
+        self.script_frame.grid(row=1, column=0, padx=10, pady=(5, 5), sticky="ew")
         self.script_frame.grid_columnconfigure(1, weight=1)
         self.script_label = ctk.CTkLabel(self.script_frame, text="Python Script:")
         self.script_label.grid(row=0, column=0, padx=10, pady=10)
@@ -58,7 +135,7 @@ class Py2WinApp(ctk.CTk):
 
         # --- Tab View for Options ---
         self.tab_view = ctk.CTkTabview(self, corner_radius=8)
-        self.tab_view.grid(row=1, column=0, padx=10, pady=5, sticky="ew")
+        self.tab_view.grid(row=2, column=0, padx=10, pady=5, sticky="ew")
         self.tab_view.add("Basic Options")
         self.tab_view.add("Pro Features")
 
@@ -66,9 +143,12 @@ class Py2WinApp(ctk.CTk):
         self.basic_tab = self.tab_view.tab("Basic Options")
         self.windowed_check = ctk.CTkCheckBox(self.basic_tab, text="Windowed App (No Console)")
         self.windowed_check.grid(row=0, column=0, padx=10, pady=10, sticky="w")
+        Tooltip(self.windowed_check, "Enable this for GUI applications. A command prompt window will not appear.")
+
         self.onefile_check = ctk.CTkCheckBox(self.basic_tab, text="One-File Executable")
         self.onefile_check.grid(row=0, column=1, padx=10, pady=10, sticky="w")
         self.onefile_check.select()
+        Tooltip(self.onefile_check, "Package everything into a single executable file. Startup may be slower.")
 
         # --- Pro Features Tab ---
         self.pro_tab = self.tab_view.tab("Pro Features")
@@ -84,6 +164,7 @@ class Py2WinApp(ctk.CTk):
         self.icon_entry.grid(row=0, column=1, padx=10, pady=10, sticky="ew")
         self.icon_browse_button = ctk.CTkButton(self.icon_frame, text="Browse", command=self.browse_icon)
         self.icon_browse_button.grid(row=0, column=2, padx=10, pady=10)
+        Tooltip(self.icon_browse_button, "Select a .ico file to use as the icon for the executable.")
 
         self.data_frame = ctk.CTkFrame(self.pro_tab)
         self.data_frame.grid(row=1, column=0, padx=5, pady=5, sticky="nsew")
@@ -98,22 +179,97 @@ class Py2WinApp(ctk.CTk):
         self.data_buttons_frame.grid(row=1, column=1, padx=(0, 10), pady=10, sticky="ns")
         self.add_file_button = ctk.CTkButton(self.data_buttons_frame, text="Add File(s)", command=self.add_data_file)
         self.add_file_button.grid(row=0, column=0, padx=5, pady=5)
+        Tooltip(self.add_file_button, "Bundle additional data files with your executable (e.g., images, configs).")
+
         self.add_folder_button = ctk.CTkButton(self.data_buttons_frame, text="Add Folder", command=self.add_data_folder)
         self.add_folder_button.grid(row=1, column=0, padx=5, pady=5)
+        Tooltip(self.add_folder_button, "Bundle an entire folder and its contents.")
+
         self.remove_data_button = ctk.CTkButton(self.data_buttons_frame, text="Remove", command=self.remove_selected_data)
         self.remove_data_button.grid(row=2, column=0, padx=5, pady=5)
 
         # --- Output Textbox ---
         self.output_textbox = ctk.CTkTextbox(self, state="disabled", corner_radius=8)
-        self.output_textbox.grid(row=2, column=0, padx=10, pady=(5, 10), sticky="nsew")
+        self.output_textbox.grid(row=3, column=0, padx=10, pady=(5, 10), sticky="nsew")
 
         # --- Build Button ---
         self.build_button = ctk.CTkButton(self, text="Build Executable", height=40, command=self.start_build_thread)
-        self.build_button.grid(row=3, column=0, padx=10, pady=10, sticky="ew")
+        self.build_button.grid(row=4, column=0, padx=10, pady=10, sticky="ew")
 
         # --- Status Bar ---
         self.status_bar = ctk.CTkLabel(self, text="", anchor="w")
-        self.status_bar.grid(row=4, column=0, padx=10, pady=(0, 10), sticky="ew")
+        self.status_bar.grid(row=5, column=0, padx=10, pady=(0, 10), sticky="ew")
+
+    def save_profile(self):
+        self.update_status("Saving profile...")
+        profile_path = filedialog.asksaveasfilename(
+            title="Save Build Profile",
+            defaultextension=".json",
+            filetypes=(("Py2Win Profiles", "*.json"), ("All files", "*.*"))
+        )
+        if not profile_path:
+            self.update_status("Save cancelled.")
+            return
+
+        settings = {
+            "script_path": self.script_entry.get(),
+            "is_windowed": self.windowed_check.get(),
+            "is_onefile": self.onefile_check.get(),
+            "icon_path": self.icon_entry.get(),
+            "data_paths": list(self.data_paths)
+        }
+
+        try:
+            with open(profile_path, 'w') as f:
+                json.dump(settings, f, indent=4)
+            self.update_status(f"Profile saved to {os.path.basename(profile_path)}")
+        except Exception as e:
+            self.update_status(f"Error saving profile: {e}")
+            self.log(f"Error saving profile: {e}")
+
+    def load_profile(self):
+        self.update_status("Loading profile...")
+        profile_path = filedialog.askopenfilename(
+            title="Load Build Profile",
+            filetypes=(("Py2Win Profiles", "*.json"), ("All files", "*.*"))
+        )
+        if not profile_path:
+            self.update_status("Load cancelled.")
+            return
+
+        try:
+            with open(profile_path, 'r') as f:
+                settings = json.load(f)
+
+            # Clear existing settings
+            self.script_entry.delete(0, "end")
+            self.icon_entry.delete(0, "end")
+            self.data_listbox.delete(0, "end")
+            self.data_paths.clear()
+
+            # Apply loaded settings
+            self.script_entry.insert(0, settings.get("script_path", ""))
+            self.icon_entry.insert(0, settings.get("icon_path", ""))
+
+            if settings.get("is_windowed", 0): self.windowed_check.select()
+            else: self.windowed_check.deselect()
+
+            if settings.get("is_onefile", 1): self.onefile_check.select()
+            else: self.onefile_check.deselect()
+
+            for path in settings.get("data_paths", []):
+                self.data_paths.append(path)
+                prefix = "DIR:  " if os.path.isdir(path) else "FILE: "
+                self.data_listbox.insert("end", f"{prefix}{path}")
+
+            self.update_status(f"Profile loaded from {os.path.basename(profile_path)}")
+
+        except (json.JSONDecodeError, KeyError) as e:
+            self.update_status(f"Error: Invalid or corrupt profile file.")
+            self.log(f"Error loading profile: {e}")
+        except Exception as e:
+            self.update_status(f"Error loading profile: {e}")
+            self.log(f"Error loading profile: {e}")
 
     def browse_script(self):
         self.update_status("Browsing for Python script...")
